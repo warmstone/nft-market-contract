@@ -2,6 +2,7 @@
 pragma solidity ^0.8.33;
 
 import {LibOrder} from "../libraries/LibOrder.sol";
+
 interface IExchange {
     event OrderFulfilled(
         bytes32 indexed orderHash,
@@ -24,21 +25,11 @@ interface IExchange {
     event OrderCancelled(address indexed maker, uint256 indexed salt);
     event CounterIncremented(address indexed maker, uint256 newCounter);
 
-    function fulfillOrder(
-        LibOrder.Order calldata order,
-        bytes calldata signature
-    ) external payable;
+    function fulfillOrder(LibOrder.Order calldata order, bytes calldata signature) external payable;
 
-    function acceptOffer(
-        LibOrder.Order calldata order,
-        bytes calldata signature,
-        uint256 takerTokenId
-    ) external;
+    function acceptOffer(LibOrder.Order calldata order, bytes calldata signature, uint256 takerTokenId) external;
 
-    function fulfillBatch(
-        LibOrder.Order[] calldata orders,
-        bytes[] calldata signatures
-    ) external payable;
+    function fulfillBatch(LibOrder.Order[] calldata orders, bytes[] calldata signatures) external payable;
 
     function cancel(uint256 salt) external;
     function cancel(uint256[] calldata salts) external;
