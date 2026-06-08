@@ -22,7 +22,7 @@
 
 ```bash
 cd /home/warms/workspace/nft-market-contract
-forge init --no-commit
+forge init
 ```
 
 Expected: Creates `foundry.toml`, `contracts/`, `test/`, `script/`, `lib/` with forge-std.
@@ -30,8 +30,8 @@ Expected: Creates `foundry.toml`, `contracts/`, `test/`, `script/`, `lib/` with 
 - [ ] **Step 2: Install OpenZeppelin contracts**
 
 ```bash
-forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.0.2 --no-commit
+forge install OpenZeppelin/openzeppelin-contracts@v5.0.2
+forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v5.0.2
 ```
 
 Expected: Dependencies in `lib/`.
