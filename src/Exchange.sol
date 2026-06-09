@@ -15,6 +15,10 @@ import {IERC721Minimal} from "./interfaces/IERC721Minimal.sol";
 import {LibOrder} from "./libraries/LibOrder.sol";
 import {LibTransfer} from "./libraries/LibTransfer.sol";
 
+/// @title NFT Signed Order DEX
+/// @notice EIP-712 off-chain signed order marketplace for ERC721 NFTs.
+///         Makers sign orders off-chain (zero gas), takers submit them on-chain.
+///         Supports fixed-price sell orders (ETH) and buy offers (WETH).
 contract Exchange is
     Initializable,
     UUPSUpgradeable,
@@ -28,13 +32,23 @@ contract Exchange is
     error UnsupportedPaymentToken();
     error InsufficientAllowance();
 
+    /// @notice Timestamp when the next upgrade was scheduled. Must be set via
+    ///         scheduleUpgrade() before _authorizeUpgrade will succeed.
     uint256 public upgradeScheduled;
+
+    /// @notice Minimum delay between scheduleUpgrade() and actual upgrade execution.
     uint256 constant UPGRADE_TIMELOCK = 48 hours;
 
     constructor() {
         _disableInitializers();
     }
 
+    /// @notice One-time initializer called on the proxy. Sets up upgradeable
+    ///         components and stores references to the three config modules.
+    /// @param _protocolManager ProtocolManager address (fee config, payment whitelist)
+    /// @param _royaltyManager  RoyaltyManager address (EIP-2981 lookup + fallback)
+    /// @param _collectionManager CollectionManager address (allowlist/blocklist)
+    /// @param _owner Initial owner of the Exchange (typically a multisig)
     function initialize(
         address _protocolManager,
         address _royaltyManager,
@@ -52,10 +66,14 @@ contract Exchange is
 
     // --- UUPS ---
 
+    /// @notice Begins the 48-hour upgrade timelock. Only callable by owner.
+    ///         After 48 hours, _authorizeUpgrade will accept the upgrade.
     function scheduleUpgrade() external onlyOwner {
         upgradeScheduled = block.timestamp;
     }
 
+    /// @notice UUPS authorization hook. Only owner can upgrade, and only after
+    ///         the 48-hour timelock has expired since scheduleUpgrade().
     function _authorizeUpgrade(address) internal override onlyOwner {
         require(upgradeScheduled > 0, "upgrade not scheduled");
         require(block.timestamp >= upgradeScheduled + UPGRADE_TIMELOCK, "timelock not expired");
@@ -63,16 +81,22 @@ contract Exchange is
 
     // --- Pause ---
 
+    /// @notice Pauses all trade execution. Cancel/incrementCounter remain usable.
     function pause() external onlyOwner {
         _pause();
     }
 
+    /// @notice Unpauses trade execution.
     function unpause() external onlyOwner {
         _unpause();
     }
 
     // --- Trade execution ---
 
+    /// @notice Accept a maker-signed sell order. Caller pays ETH and receives
+    ///         the NFT from the maker. Excess ETH is refunded.
+    /// @param order EIP-712 signed order (side must be Sell)
+    /// @param signature ECDSA signature from order.maker
     function fulfillOrder(LibOrder.Order calldata order, bytes calldata signature)
         external
         payable
@@ -86,6 +110,11 @@ contract Exchange is
         }
     }
 
+    /// @notice Accept a maker-signed buy offer. Caller sends the NFT to the maker
+    ///         and receives the payment token (typically WETH) in return.
+    /// @param order EIP-712 signed order (side must be Buy)
+    /// @param signature ECDSA signature from order.maker
+    /// @param takerTokenId The token ID the caller is selling to the maker
     function acceptOffer(LibOrder.Order calldata order, bytes calldata signature, uint256 takerTokenId)
         external
         nonReentrant
@@ -95,6 +124,10 @@ contract Exchange is
         _fulfillSingle(order, signature, order.price, takerTokenId, 0);
     }
 
+    /// @notice Batch version of fulfillOrder. Both sell and buy orders can be
+    ///         mixed. Excess ETH is refunded. Any single failure reverts all.
+    /// @param orders Array of EIP-712 signed orders
+    /// @param signatures Matching array of ECDSA signatures
     function fulfillBatch(LibOrder.Order[] calldata orders, bytes[] calldata signatures)
         external
         payable
@@ -117,6 +150,14 @@ contract Exchange is
 
     // --- Internal ---
 
+    /// @dev Core settlement flow: validate → mark filled → collect funds → transfer NFT → emit event.
+    ///      Marking filled before external calls prevents reentrancy.
+    /// @param order The signed order to settle
+    /// @param signature ECDSA signature
+    /// @param price Final settlement price
+    /// @param takerTokenId Actual token ID being transferred (order.tokenId for Sell; caller-provided for Buy)
+    /// @param ethAvailable ETH forwarded from msg.value (0 for non-ETH payments)
+    /// @return ethSpent Amount of ETH consumed (0 for ERC20 payments)
     function _fulfillSingle(
         LibOrder.Order calldata order,
         bytes calldata signature,
