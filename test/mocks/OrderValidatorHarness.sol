@@ -3,6 +3,7 @@ pragma solidity ^0.8.33;
 
 import {LibOrder} from "../../src/libraries/LibOrder.sol";
 import {OrderValidator} from "../../src/OrderValidator.sol";
+import {ICollectionManager} from "../../src/interfaces/ICollectionManager.sol";
 
 contract OrderValidatorHarness is OrderValidator {
     function validateOrder(LibOrder.Order calldata order, bytes calldata signature) external view {
@@ -11,5 +12,9 @@ contract OrderValidatorHarness is OrderValidator {
 
     function markFilled(bytes32 orderHash) external {
         _markFilled(orderHash);
+    }
+
+    function setCollectionManager(address _cm) external {
+        collectionManager = ICollectionManager(_cm);
     }
 }

@@ -7,6 +7,7 @@ import {LibSignature} from "../../src/libraries/LibSignature.sol";
 import {NonceManager} from "../../src/NonceManager.sol";
 import {OrderValidator} from "../../src/OrderValidator.sol";
 import {OrderValidatorHarness} from "../mocks/OrderValidatorHarness.sol";
+import {MockCollectionManager} from "../mocks/MockCollectionManager.sol";
 
 contract OrderValidatorTest is Test {
     OrderValidatorHarness validator;
@@ -179,5 +180,25 @@ contract OrderValidatorTest is Test {
         bytes32 ds = validator.domainSeparator();
         bytes32 expected = LibSignature.domainSeparator(address(validator));
         assertEq(ds, expected);
+    }
+
+    function test_Validate_CollectionBlocked() public {
+        MockCollectionManager cm = new MockCollectionManager();
+        cm.setCollectionBlocked(address(0x2001), true);
+        validator.setCollectionManager(address(cm));
+
+        LibOrder.Order memory order = _validOrder();
+        bytes memory sig = _signOrder(order);
+        vm.expectRevert(OrderValidator.CollectionBlocked.selector);
+        validator.validateOrder(order, sig);
+    }
+
+    function test_Validate_CollectionAllowed() public {
+        MockCollectionManager cm = new MockCollectionManager();
+        validator.setCollectionManager(address(cm));
+
+        LibOrder.Order memory order = _validOrder();
+        bytes memory sig = _signOrder(order);
+        validator.validateOrder(order, sig);
     }
 }

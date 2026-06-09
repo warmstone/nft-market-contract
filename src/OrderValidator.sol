@@ -4,12 +4,16 @@ pragma solidity ^0.8.33;
 import {NonceManager} from "./NonceManager.sol";
 import {LibOrder} from "./libraries/LibOrder.sol";
 import {LibSignature} from "./libraries/LibSignature.sol";
+import {ICollectionManager} from "./interfaces/ICollectionManager.sol";
 
 abstract contract OrderValidator is NonceManager {
     error OrderExpired();
     error OrderNotStarted();
     error WrongTaker();
     error UnsupportedAssetType();
+    error CollectionBlocked();
+
+    ICollectionManager public collectionManager;
 
     function domainSeparator() public view virtual returns (bytes32) {
         return LibSignature.domainSeparator(address(this));
@@ -42,7 +46,12 @@ abstract contract OrderValidator is NonceManager {
         bytes32 orderHash = LibOrder.hash(order);
         _checkNotFilled(orderHash);
 
-        // 7. 资产类型校验
+        // 8. 资产类型校验
         require(order.assetType == LibOrder.AssetType.ERC721, UnsupportedAssetType());
+
+        // 9. Collection 白名单校验
+        if (address(collectionManager) != address(0)) {
+            require(collectionManager.isCollectionAllowed(order.collection), CollectionBlocked());
+        }
     }
 }
