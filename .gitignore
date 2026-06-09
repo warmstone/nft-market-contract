@@ -11,13 +11,17 @@ out/
 /broadcast/*/31337/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
+# Docs (keep deployment records, ignore spec drafts and generated files)
+docs/**
+!docs/deployments.md
 
 # Claude Code / agents
 .claude/
 .agents/
 AGENTS.md
+
+# Deployment artifacts
+script/deployment-*.json
 
 # Dotenv file
 .env
