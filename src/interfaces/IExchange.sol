@@ -22,16 +22,9 @@ interface IExchange {
         uint256 royaltyFee
     );
 
-    event OrderCancelled(address indexed maker, uint256 indexed salt);
-    event CounterIncremented(address indexed maker, uint256 newCounter);
-
     function fulfillOrder(LibOrder.Order calldata order, bytes calldata signature) external payable;
 
     function acceptOffer(LibOrder.Order calldata order, bytes calldata signature, uint256 takerTokenId) external;
 
     function fulfillBatch(LibOrder.Order[] calldata orders, bytes[] calldata signatures) external payable;
-
-    function cancel(uint256 salt) external;
-    function cancel(uint256[] calldata salts) external;
-    function incrementCounter() external;
 }

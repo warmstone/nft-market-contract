@@ -43,10 +43,14 @@ abstract contract PaymentProcessor {
         uint256 ethAvailable
     ) internal returns (PaymentResult memory result) {
         // 1. 计算手续费、版税
-        result.protocolFee = LibFee.calcProtocolFee(price, protocolManager.protocolFeeBPS());
-        (address royaltyReceiver, uint256 royaltyFee) =
-            royaltyManager.getRoyalty(order.collection, order.tokenId, price);
-        result.royaltyFee = royaltyFee;
+        if (address(protocolManager) != address(0)) {
+            result.protocolFee = LibFee.calcProtocolFee(price, protocolManager.protocolFeeBPS());
+        }
+        address royaltyReceiver;
+        if (address(royaltyManager) != address(0)) {
+            (royaltyReceiver, result.royaltyFee) =
+                royaltyManager.getRoyalty(order.collection, order.tokenId, price);
+        }
         require(result.protocolFee + result.royaltyFee <= price, FeeExceedsPrice());
 
         // 2. 收集付款
@@ -59,7 +63,10 @@ abstract contract PaymentProcessor {
 
         // 3. 手续费
         if (result.protocolFee > 0) {
-            _transferFunds(protocolManager.feeRecipient(), result.protocolFee, order.paymentToken);
+            address feeRecipient = address(protocolManager) != address(0)
+                ? protocolManager.feeRecipient()
+                : address(0);
+            _transferFunds(feeRecipient, result.protocolFee, order.paymentToken);
         }
 
         // 4. 版税

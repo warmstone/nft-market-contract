@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.33;
+
+import {Test} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {LibOrder} from "../../src/libraries/LibOrder.sol";
+import {LibSignature} from "../../src/libraries/LibSignature.sol";
+import {NonceManager} from "../../src/NonceManager.sol";
+import {Exchange} from "../../src/Exchange.sol";
+import {MockERC721} from "../mocks/MockERC721.sol";
+import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockProtocolManager} from "../mocks/MockProtocolManager.sol";
+
+contract ExchangeTest is Test {
+    Exchange exchange;
+    MockERC721 nft;
+    MockERC20 weth;
+    MockProtocolManager pm;
+
+    uint256 constant MAKER_KEY = 0xabc123;
+    uint256 constant TAKER_KEY = 0xdef456;
+    address maker;
+    address taker;
+    address feeRecipient = address(0xFEE);
+
+    function setUp() public {
+        maker = vm.addr(MAKER_KEY);
+        taker = vm.addr(TAKER_KEY);
+
+        nft = new MockERC721("Test", "TST");
+        weth = new MockERC20("WETH", "WETH");
+        pm = new MockProtocolManager();
+        pm.setPaymentTokenAllowed(address(weth), true);
+
+        Exchange impl = new Exchange();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), "");
+        exchange = Exchange(address(proxy));
+        exchange.initialize(address(pm), address(0), address(0), address(this));
+
+        vm.deal(taker, 10 ether);
+    }
+
+    function _signOrder(LibOrder.Order memory order, uint256 key) internal view returns (bytes memory) {
+        bytes32 digest = LibSignature.getTypedDataHash(order, address(exchange));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _validSellOrder(uint256 tokenId) internal view returns (LibOrder.Order memory) {
+        return LibOrder.Order({
+            maker: maker,
+            taker: address(0),
+            side: LibOrder.OrderSide.Sell,
+            kind: LibOrder.OrderKind.FixedPrice,
+            assetType: LibOrder.AssetType.ERC721,
+            collection: address(nft),
+            tokenId: tokenId,
+            amount: 1,
+            paymentToken: address(0),
+            price: 1 ether,
+            startPrice: 1 ether,
+            startTime: uint64(block.timestamp),
+            endTime: uint64(block.timestamp + 1 days),
+            salt: uint256(keccak256(abi.encodePacked(tokenId))),
+            counter: 0,
+            extra: bytes32(0)
+        });
+    }
+
+    // --- fulfillOrder (Sell: maker sells NFT, taker pays ETH) ---
+
+    function test_FulfillOrder_ETH() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 1;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+
+        assertEq(nft.ownerOf(tokenId), taker);
+        assertEq(address(feeRecipient).balance, 0.005 ether);
+    }
+
+    function test_FulfillOrder_ETHExcessRefund() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 2;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        uint256 balanceBefore = taker.balance;
+        vm.prank(taker);
+        exchange.fulfillOrder{value: 2 ether}(order, sig);
+
+        assertEq(nft.ownerOf(tokenId), taker);
+        assertEq(taker.balance, balanceBefore - 1 ether);
+    }
+
+    // --- acceptOffer (Buy: maker buys NFT, taker sends NFT, maker pays WETH) ---
+
+    function test_AcceptOffer_WETH() public {
+        uint256 tokenId = nft.mint(taker);
+        vm.prank(taker);
+        nft.approve(address(exchange), tokenId);
+
+        weth.mint(maker, 1 ether);
+        vm.prank(maker);
+        weth.approve(address(exchange), 1 ether);
+
+        LibOrder.Order memory order = _buyOrder(tokenId);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.acceptOffer(order, sig, tokenId);
+
+        assertEq(nft.ownerOf(tokenId), maker);
+        assertEq(weth.balanceOf(taker), 1 ether - 0.005 ether);
+    }
+
+    // --- Double-fill protection ---
+
+    function test_FulfillOrder_RevertsDoubleFill() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 3;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+
+        vm.prank(taker);
+        vm.expectRevert(NonceManager.OrderAlreadyFilled.selector);
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+    }
+
+    // --- Batch ---
+
+    function test_FulfillBatch() public {
+        uint256 tokenId1 = nft.mint(maker);
+        uint256 tokenId2 = nft.mint(maker);
+        vm.prank(maker);
+        nft.setApprovalForAll(address(exchange), true);
+
+        LibOrder.Order[] memory orders = new LibOrder.Order[](2);
+        bytes[] memory sigs = new bytes[](2);
+        orders[0] = _validSellOrder(tokenId1);
+        orders[1] = _validSellOrder(tokenId2);
+        orders[0].salt = 4;
+        orders[1].salt = 5;
+        sigs[0] = _signOrder(orders[0], MAKER_KEY);
+        sigs[1] = _signOrder(orders[1], MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.fulfillBatch{value: 2 ether}(orders, sigs);
+
+        assertEq(nft.ownerOf(tokenId1), taker);
+        assertEq(nft.ownerOf(tokenId2), taker);
+    }
+
+    // --- UUPS: scheduleUpgrade ---
+
+    function test_ScheduleUpgrade() public {
+        assertEq(exchange.upgradeScheduled(), 0);
+        exchange.scheduleUpgrade();
+        assertGt(exchange.upgradeScheduled(), 0);
+    }
+
+    function test_ScheduleUpgrade_RevertsNonOwner() public {
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBEEF)));
+        exchange.scheduleUpgrade();
+    }
+
+    // --- Pause ---
+
+    function test_Paused_PreventsTrade() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        exchange.pause();
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 6;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+        vm.prank(taker);
+        vm.expectRevert();
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+    }
+
+    // --- Wrong side ---
+
+    function test_FulfillOrder_RevertsBuySide() public {
+        uint256 tokenId = nft.mint(taker);
+        LibOrder.Order memory order = _buyOrder(tokenId);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+        vm.prank(taker);
+        vm.expectRevert("wrong side");
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+    }
+
+    // --- Helpers ---
+
+    function _buyOrder(uint256 tokenId) internal view returns (LibOrder.Order memory) {
+        return LibOrder.Order({
+            maker: maker,
+            taker: address(0),
+            side: LibOrder.OrderSide.Buy,
+            kind: LibOrder.OrderKind.FixedPrice,
+            assetType: LibOrder.AssetType.ERC721,
+            collection: address(nft),
+            tokenId: tokenId,
+            amount: 1,
+            paymentToken: address(weth),
+            price: 1 ether,
+            startPrice: 1 ether,
+            startTime: uint64(block.timestamp),
+            endTime: uint64(block.timestamp + 1 days),
+            salt: uint256(keccak256(abi.encodePacked(tokenId, "buy"))),
+            counter: 0,
+            extra: bytes32(0)
+        });
+    }
+}
