@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibOrder} from "./libraries/LibOrder.sol";
 import {LibFee} from "./libraries/LibFee.sol";
 import {LibTransfer} from "./libraries/LibTransfer.sol";
-
-interface IERC20 {
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function transfer(address to, uint256 amount) external returns (bool);
-}
 
 interface IProtocolManager {
     function protocolFeeBPS() external view returns (uint128);
@@ -24,6 +21,8 @@ interface IRoyaltyManager {
 }
 
 abstract contract PaymentProcessor {
+    using SafeERC20 for IERC20;
+
     error InsufficientPayment();
     error FeeExceedsPrice();
 
@@ -55,7 +54,7 @@ abstract contract PaymentProcessor {
             require(ethAvailable >= price, InsufficientPayment());
             result.ethSpent = price;
         } else {
-            IERC20(order.paymentToken).transferFrom(payer, address(this), price);
+            IERC20(order.paymentToken).safeTransferFrom(payer, address(this), price);
         }
 
         // 3. 手续费
@@ -76,10 +75,10 @@ abstract contract PaymentProcessor {
     }
 
     function _transferFunds(address to, uint256 amount, address paymentToken) private {
-        if (paymentToken ==  address(0)) {
+        if (paymentToken == address(0)) {
             LibTransfer.safeTransferETH(to, amount);
         } else {
-            IERC20(paymentToken).transfer(to, amount);
+            IERC20(paymentToken).safeTransfer(to, amount);
         }
     }
 }
