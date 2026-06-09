@@ -63,4 +63,27 @@ contract LibOrderTest is Test {
         bytes32 th2 = LibOrder.ORDER_TYPEHASH;
         assertEq(th1, th2);
     }
+
+    function test_Hash_MatchesBackendGoldenOrder() public pure {
+        LibOrder.Order memory order = LibOrder.Order({
+            maker: address(0xa5Ad3E0385d6506CC27dFCd8631F1D08A0717b88),
+            taker: address(0),
+            side: LibOrder.OrderSide.Sell,
+            kind: LibOrder.OrderKind.FixedPrice,
+            assetType: LibOrder.AssetType.ERC721,
+            collection: address(0x2222222222222222222222222222222222222222),
+            tokenId: 42,
+            amount: 1,
+            paymentToken: address(0),
+            price: 1 ether,
+            startPrice: 1 ether,
+            startTime: 1710000000,
+            endTime: 0,
+            salt: 123456789,
+            counter: 0,
+            extra: bytes32(0)
+        });
+
+        assertEq(order.hash(), 0x8d001e4999b650c4066b96c67bcd48ce73c8b62ea2c16d30f1bb75b0bc04192d);
+    }
 }

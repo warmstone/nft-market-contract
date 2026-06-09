@@ -5,7 +5,10 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {LibOrder} from "../../src/libraries/LibOrder.sol";
 import {LibSignature} from "../../src/libraries/LibSignature.sol";
+import {IExchange} from "../../src/interfaces/IExchange.sol";
 import {NonceManager} from "../../src/NonceManager.sol";
+import {OrderValidator} from "../../src/OrderValidator.sol";
+import {PaymentProcessor} from "../../src/PaymentProcessor.sol";
 import {Exchange} from "../../src/Exchange.sol";
 import {MockERC721} from "../mocks/MockERC721.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
@@ -85,6 +88,38 @@ contract ExchangeTest is Test {
         assertEq(address(feeRecipient).balance, 0.005 ether);
     }
 
+    function test_FulfillOrder_EmitsFullEventForIndexer() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 15;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+        bytes32 orderHash = LibOrder.hash(order);
+
+        vm.prank(taker);
+        vm.expectEmit(true, true, true, true, address(exchange));
+        emit IExchange.OrderFulfilled(
+            orderHash,
+            order.salt,
+            maker,
+            taker,
+            maker,
+            taker,
+            LibOrder.OrderSide.Sell,
+            LibOrder.OrderKind.FixedPrice,
+            address(nft),
+            tokenId,
+            1,
+            address(0),
+            1 ether,
+            0.005 ether,
+            0
+        );
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+    }
+
     function test_FulfillOrder_ETHExcessRefund() public {
         uint256 tokenId = nft.mint(maker);
         vm.prank(maker);
@@ -100,6 +135,35 @@ contract ExchangeTest is Test {
 
         assertEq(nft.ownerOf(tokenId), taker);
         assertEq(taker.balance, balanceBefore - 1 ether);
+    }
+
+    function test_FulfillOrder_RevertsInsufficientETH() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 16;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        vm.expectRevert(PaymentProcessor.InsufficientPayment.selector);
+        exchange.fulfillOrder{value: 1 ether - 1}(order, sig);
+    }
+
+    function test_FulfillOrder_RevertsWrongTakerForPrivateOrder() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 17;
+        order.taker = address(0xBEEF);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        vm.expectRevert(OrderValidator.WrongTaker.selector);
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
     }
 
     // --- acceptOffer (Buy: maker buys NFT, taker sends NFT, maker pays WETH) ---
@@ -121,6 +185,20 @@ contract ExchangeTest is Test {
 
         assertEq(nft.ownerOf(tokenId), maker);
         assertEq(weth.balanceOf(taker), 1 ether - 0.005 ether);
+    }
+
+    function test_AcceptOffer_RevertsSellSide() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 18;
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        vm.expectRevert(Exchange.WrongSide.selector);
+        exchange.acceptOffer(order, sig, tokenId);
     }
 
     // --- Double-fill protection ---
@@ -167,6 +245,15 @@ contract ExchangeTest is Test {
 
         assertEq(nft.ownerOf(tokenId1), taker);
         assertEq(nft.ownerOf(tokenId2), taker);
+    }
+
+    function test_FulfillBatch_RevertsLengthMismatch() public {
+        LibOrder.Order[] memory orders = new LibOrder.Order[](1);
+        bytes[] memory sigs = new bytes[](0);
+        uint256[] memory takerTokenIds = new uint256[](1);
+
+        vm.expectRevert(Exchange.LengthMismatch.selector);
+        exchange.fulfillBatch(orders, sigs, takerTokenIds);
     }
 
     // --- UUPS: scheduleUpgrade ---
