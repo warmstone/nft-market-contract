@@ -7,6 +7,7 @@ import {IERC2981} from "./interfaces/IERC2981.sol";
 
 contract RoyaltyManager is Ownable {
     error RoyaltyTooHigh();
+    error ZeroAddress();
 
     uint128 public constant MAX_ROYALTY_BPS = 1000;
 
@@ -38,6 +39,7 @@ contract RoyaltyManager is Ownable {
 
     function setRoyalty(address collection, address receiver, uint96 bps) external onlyOwner {
         if (bps > MAX_ROYALTY_BPS) revert RoyaltyTooHigh();
+        if (receiver == address(0)) revert ZeroAddress();
         manualRoyaltyBPS[collection] = bps;
         manualReceiver[collection] = receiver;
         emit RoyaltySet(collection, receiver, bps);

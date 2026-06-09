@@ -34,6 +34,10 @@ contract CollectionManager is Ownable, ICollectionManager {
         emit CollectionUpdated(collection, allowed, collectionBlocked[collection]);
     }
 
+    /// @notice Block a collection. Only callable by operator.
+    ///         In allowlist mode (allowlistCount > 0), blocklist entries are ignored
+    ///         by isCollectionAllowed but remain stored — they take effect if the
+    ///         allowlist is later cleared.
     function setCollectionBlocked(address collection, bool blocked) external {
         require(msg.sender == operator, NotOperator());
         collectionBlocked[collection] = blocked;

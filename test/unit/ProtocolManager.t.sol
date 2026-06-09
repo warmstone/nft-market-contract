@@ -13,14 +13,14 @@ contract ProtocolManagerTest is Test {
 
     function setUp() public {
         vm.prank(owner);
-        pm = new ProtocolManager(owner);
+        pm = new ProtocolManager(owner, feeRecipient);
     }
 
     // --- Initial state ---
     function test_InitialState() public view {
         assertEq(pm.protocolFeeBPS(), 50);
         assertEq(pm.owner(), owner);
-        assertEq(pm.feeRecipient(), address(0));
+        assertEq(pm.feeRecipient(), feeRecipient);
         assertEq(pm.operator(), address(0));
         assertFalse(pm.paymentTokenAllowed(token));
     }
@@ -52,6 +52,12 @@ contract ProtocolManagerTest is Test {
     }
 
     // --- setFeeRecipient ---
+    function test_Constructor_RevertsZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(ProtocolManager.ZeroAddress.selector);
+        new ProtocolManager(owner, address(0));
+    }
+
     function test_SetFeeRecipient() public {
         vm.prank(owner);
         pm.setFeeRecipient(feeRecipient);

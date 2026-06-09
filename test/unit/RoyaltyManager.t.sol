@@ -59,6 +59,12 @@ contract RoyaltyManagerTest is Test {
         rm.setRoyalty(address(noRoyalty), address(0xCAFE), 1001);
     }
 
+    function test_SetRoyalty_RevertsZeroReceiver() public {
+        vm.prank(owner);
+        vm.expectRevert(RoyaltyManager.ZeroAddress.selector);
+        rm.setRoyalty(address(noRoyalty), address(0), 100);
+    }
+
     function test_SetRoyalty_RevertsNonOwner() public {
         vm.prank(address(0xBEEF));
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(0xBEEF)));

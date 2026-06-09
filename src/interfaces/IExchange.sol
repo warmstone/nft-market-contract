@@ -26,5 +26,9 @@ interface IExchange {
 
     function acceptOffer(LibOrder.Order calldata order, bytes calldata signature, uint256 takerTokenId) external;
 
-    function fulfillBatch(LibOrder.Order[] calldata orders, bytes[] calldata signatures) external payable;
+    function fulfillBatch(
+        LibOrder.Order[] calldata orders,
+        bytes[] calldata signatures,
+        uint256[] calldata takerTokenIds
+    ) external payable;
 }

@@ -31,8 +31,13 @@ contract Exchange is
 {
     error UnsupportedPaymentToken();
     error InsufficientAllowance();
+    error WrongSide();
+    error LengthMismatch();
+    error UpgradeNotScheduled();
+    error TimelockNotExpired();
 
-    /// @notice Timestamp when the next upgrade was scheduled. Must be set via
+    /// @notice Emitted when a UUPS upgrade is scheduled, starting the 48-hour timelock.
+    event UpgradeScheduled(uint256 timestamp);
     ///         scheduleUpgrade() before _authorizeUpgrade will succeed.
     uint256 public upgradeScheduled;
 
@@ -68,15 +73,17 @@ contract Exchange is
 
     /// @notice Begins the 48-hour upgrade timelock. Only callable by owner.
     ///         After 48 hours, _authorizeUpgrade will accept the upgrade.
+    ///         Calling again resets the timelock to the current timestamp.
     function scheduleUpgrade() external onlyOwner {
         upgradeScheduled = block.timestamp;
+        emit UpgradeScheduled(block.timestamp);
     }
 
     /// @notice UUPS authorization hook. Only owner can upgrade, and only after
     ///         the 48-hour timelock has expired since scheduleUpgrade().
     function _authorizeUpgrade(address) internal override onlyOwner {
-        require(upgradeScheduled > 0, "upgrade not scheduled");
-        require(block.timestamp >= upgradeScheduled + UPGRADE_TIMELOCK, "timelock not expired");
+        if (upgradeScheduled == 0) revert UpgradeNotScheduled();
+        if (block.timestamp < upgradeScheduled + UPGRADE_TIMELOCK) revert TimelockNotExpired();
     }
 
     // --- Pause ---
@@ -103,7 +110,7 @@ contract Exchange is
         nonReentrant
         whenNotPaused
     {
-        require(order.side == LibOrder.OrderSide.Sell, "wrong side");
+        if (order.side != LibOrder.OrderSide.Sell) revert WrongSide();
         uint256 ethSpent = _fulfillSingle(order, signature, order.price, order.tokenId, msg.value);
         if (msg.value > ethSpent) {
             LibTransfer.safeTransferETH(msg.sender, msg.value - ethSpent);
@@ -120,7 +127,7 @@ contract Exchange is
         nonReentrant
         whenNotPaused
     {
-        require(order.side == LibOrder.OrderSide.Buy, "wrong side");
+        if (order.side != LibOrder.OrderSide.Buy) revert WrongSide();
         _fulfillSingle(order, signature, order.price, takerTokenId, 0);
     }
 
@@ -128,21 +135,29 @@ contract Exchange is
     ///         mixed. Excess ETH is refunded. Any single failure reverts all.
     /// @param orders Array of EIP-712 signed orders
     /// @param signatures Matching array of ECDSA signatures
-    function fulfillBatch(LibOrder.Order[] calldata orders, bytes[] calldata signatures)
+    /// @param takerTokenIds Token IDs the taker provides for each order
+    ///        (order.tokenId for Sell orders; the NFT being sold for Buy orders)
+    function fulfillBatch(
+        LibOrder.Order[] calldata orders,
+        bytes[] calldata signatures,
+        uint256[] calldata takerTokenIds
+    )
         external
         payable
         nonReentrant
         whenNotPaused
     {
-        require(orders.length == signatures.length, "length mismatch");
+        if (orders.length != signatures.length || orders.length != takerTokenIds.length) {
+            revert LengthMismatch();
+        }
         uint256 totalEthSpent;
         for (uint256 i = 0; i < orders.length; i++) {
             uint256 ethAvailable = msg.value - totalEthSpent;
             totalEthSpent += _fulfillSingle(
-                orders[i], signatures[i], orders[i].price, orders[i].tokenId, ethAvailable
+                orders[i], signatures[i], orders[i].price, takerTokenIds[i], ethAvailable
             );
         }
-        require(totalEthSpent <= msg.value, "overspent");
+        if (totalEthSpent > msg.value) revert InsufficientPayment();
         if (msg.value > totalEthSpent) {
             LibTransfer.safeTransferETH(msg.sender, msg.value - totalEthSpent);
         }

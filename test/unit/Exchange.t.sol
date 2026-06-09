@@ -152,15 +152,18 @@ contract ExchangeTest is Test {
 
         LibOrder.Order[] memory orders = new LibOrder.Order[](2);
         bytes[] memory sigs = new bytes[](2);
+        uint256[] memory takerTokenIds = new uint256[](2);
         orders[0] = _validSellOrder(tokenId1);
         orders[1] = _validSellOrder(tokenId2);
         orders[0].salt = 4;
         orders[1].salt = 5;
+        takerTokenIds[0] = tokenId1;
+        takerTokenIds[1] = tokenId2;
         sigs[0] = _signOrder(orders[0], MAKER_KEY);
         sigs[1] = _signOrder(orders[1], MAKER_KEY);
 
         vm.prank(taker);
-        exchange.fulfillBatch{value: 2 ether}(orders, sigs);
+        exchange.fulfillBatch{value: 2 ether}(orders, sigs, takerTokenIds);
 
         assertEq(nft.ownerOf(tokenId1), taker);
         assertEq(nft.ownerOf(tokenId2), taker);
@@ -197,6 +200,151 @@ contract ExchangeTest is Test {
         exchange.fulfillOrder{value: 1 ether}(order, sig);
     }
 
+    // --- Insufficient allowance ---
+
+    function test_AcceptOffer_RevertsInsufficientAllowance() public {
+        uint256 tokenId = nft.mint(taker);
+        vm.prank(taker);
+        nft.approve(address(exchange), tokenId);
+
+        weth.mint(maker, 1 ether);
+        // maker does NOT approve Exchange for WETH
+
+        LibOrder.Order memory order = _buyOrder(tokenId);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        vm.expectRevert(Exchange.InsufficientAllowance.selector);
+        exchange.acceptOffer(order, sig, tokenId);
+    }
+
+    // --- Mixed batch ---
+
+    function test_FulfillBatch_MixedBuyAndSell() public {
+        // Sell order: maker sells tokenA to taker for ETH
+        uint256 tokenA = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenA);
+
+        // Buy order: taker sells tokenB to maker for WETH
+        uint256 tokenB = nft.mint(taker);
+        vm.prank(taker);
+        nft.approve(address(exchange), tokenB);
+
+        weth.mint(maker, 1 ether);
+        vm.prank(maker);
+        weth.approve(address(exchange), 1 ether);
+
+        LibOrder.Order[] memory orders = new LibOrder.Order[](2);
+        bytes[] memory sigs = new bytes[](2);
+        uint256[] memory takerTokenIds = new uint256[](2);
+
+        orders[0] = _validSellOrder(tokenA);
+        orders[0].salt = 10;
+        takerTokenIds[0] = tokenA;
+
+        orders[1] = _buyOrder(tokenB);
+        orders[1].salt = 11;
+        takerTokenIds[1] = tokenB;
+
+        sigs[0] = _signOrder(orders[0], MAKER_KEY);
+        sigs[1] = _signOrder(orders[1], MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.fulfillBatch{value: 1 ether}(orders, sigs, takerTokenIds);
+
+        // taker received tokenA (from sell order)
+        assertEq(nft.ownerOf(tokenA), taker);
+        // maker received tokenB (from buy order)
+        assertEq(nft.ownerOf(tokenB), maker);
+        // taker received WETH for tokenB
+        assertEq(weth.balanceOf(taker), 1 ether - 0.005 ether);
+    }
+
+    function test_FulfillBatch_ExcessETHRefund() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order[] memory orders = new LibOrder.Order[](1);
+        bytes[] memory sigs = new bytes[](1);
+        uint256[] memory takerTokenIds = new uint256[](1);
+        orders[0] = _validSellOrder(tokenId);
+        orders[0].salt = 12;
+        takerTokenIds[0] = tokenId;
+        sigs[0] = _signOrder(orders[0], MAKER_KEY);
+
+        uint256 balanceBefore = taker.balance;
+        vm.prank(taker);
+        exchange.fulfillBatch{value: 2 ether}(orders, sigs, takerTokenIds);
+
+        assertEq(taker.balance, balanceBefore - 1 ether);
+    }
+
+    // --- Payment token whitelist ---
+
+    function test_FulfillOrder_RevertsUnsupportedPaymentToken() public {
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 13;
+        order.paymentToken = address(0xBADC0FFEE);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        vm.expectRevert(Exchange.UnsupportedPaymentToken.selector);
+        exchange.fulfillOrder{value: 1 ether}(order, sig);
+    }
+
+    function test_AcceptOffer_ERC20Sell() public {
+        // Sell order denominated in WETH: maker sells NFT, taker pays via WETH
+        uint256 tokenId = nft.mint(maker);
+        vm.prank(maker);
+        nft.approve(address(exchange), tokenId);
+
+        weth.mint(taker, 1 ether);
+        vm.prank(taker);
+        weth.approve(address(exchange), 1 ether);
+
+        LibOrder.Order memory order = _validSellOrder(tokenId);
+        order.salt = 14;
+        order.paymentToken = address(weth);
+        bytes memory sig = _signOrder(order, MAKER_KEY);
+
+        vm.prank(taker);
+        exchange.fulfillOrder(order, sig);
+
+        assertEq(nft.ownerOf(tokenId), taker);
+        assertEq(weth.balanceOf(maker), 1 ether - 0.005 ether);
+    }
+
+    // --- UUPS timelock enforcement ---
+
+    function test_UpgradeTimelock_RevertsNotScheduled() public {
+        Exchange newImpl = new Exchange();
+        vm.expectRevert(Exchange.UpgradeNotScheduled.selector);
+        exchange.upgradeToAndCall(address(newImpl), "");
+    }
+
+    function test_UpgradeTimelock_RevertsNotExpired() public {
+        Exchange newImpl = new Exchange();
+        exchange.scheduleUpgrade();
+        vm.expectRevert(Exchange.TimelockNotExpired.selector);
+        exchange.upgradeToAndCall(address(newImpl), "");
+    }
+
+    function test_UpgradeTimelock_Expired() public {
+        Exchange newImpl = new Exchange();
+        exchange.scheduleUpgrade();
+        vm.warp(block.timestamp + 48 hours + 1);
+        exchange.upgradeToAndCall(address(newImpl), "");
+        // after successful upgrade, the proxy should delegate to new impl
+        // basic sanity: owner unchanged
+        assertEq(exchange.owner(), address(this));
+    }
+
     // --- Wrong side ---
 
     function test_FulfillOrder_RevertsBuySide() public {
@@ -204,7 +352,7 @@ contract ExchangeTest is Test {
         LibOrder.Order memory order = _buyOrder(tokenId);
         bytes memory sig = _signOrder(order, MAKER_KEY);
         vm.prank(taker);
-        vm.expectRevert("wrong side");
+        vm.expectRevert(Exchange.WrongSide.selector);
         exchange.fulfillOrder{value: 1 ether}(order, sig);
     }
 

@@ -20,7 +20,9 @@ contract ProtocolManager is Ownable {
     event PaymentTokenUpdated(address indexed token, bool allowed);
     event OperatorUpdated(address indexed oldOperator, address indexed newOperator);
 
-    constructor(address _owner) Ownable(_owner) {
+    constructor(address _owner, address _feeRecipient) Ownable(_owner) {
+        if (_feeRecipient == address(0)) revert ZeroAddress();
+        feeRecipient = _feeRecipient;
         protocolFeeBPS = 50;
     }
 
