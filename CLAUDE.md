@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NFT Signed Order DEX — an EIP-712 off-chain signed order marketplace for ERC721 NFTs. Makers sign orders off-chain (zero gas), takers submit them on-chain for settlement. A Go backend maintains the searchable orderbook, metadata, and API; the contract layer handles only trustless operations: signature verification, replay protection, NFT transfer, fund settlement, and royalty distribution.
 
-**Current state**: Design phase. Detailed spec in `2026-06-05-signed-order-dex-design-v3.md`. No contract code written yet.
+**Current state**: Deployed to Sepolia testnet (chain 11155111). See `docs/deployments.md` for addresses. The design spec is `2026-06-05-signed-order-dex-design-v3.md`. Mainnet deployment not yet done.
 
 ## Tech Stack
 
@@ -21,7 +21,14 @@ forge build                    # Compile contracts
 forge test                     # Run all tests
 forge test --gas-report        # Run tests with gas report
 forge test --match-test <NAME> # Run a single test
+forge fmt --check              # Lint (format check)
 forge coverage                 # Test coverage report
+
+# Deploy (helper script)
+source .env && ./script/deploy.sh <dry-sepolia|deploy-sepolia|dry-mainnet|deploy-mainnet|verify>
+
+# Deploy (direct forge script)
+forge script script/Deploy.s.sol:DeployScript --sig "run()" --rpc-url <URL> --private-key <KEY> --broadcast --verify
 ```
 
 ## Architecture
